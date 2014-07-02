@@ -20,6 +20,8 @@ class vsOnline extends Adapter
   SSLCACertPath     = process.env.HUBOT_VSONLINE_SSL_CA_KEY_PATH
   
   hubotUserTFID = null
+  
+  debugTime = process.env.HUBOT_VSONLINE_DEBUG_TIME || false
 
   roomsStringList = process.env.HUBOT_VSONLINE_ROOMS || ""
   
@@ -54,6 +56,11 @@ class vsOnline extends Adapter
   send: (envelope, strings...) ->
     messageToSend =
       content : strings.join "\n"
+                  
+    # include timing information on the message for timing tracing
+    if debugTime      
+      messageToSend.content += "\nDBG=> TFS Delay: " + envelope.message.tfsProcessTime + " Hubot Processing: " + process.hrtime(envelope.message.start) + " Send: " + (new Date())
+    
     client = Client.createClient accountName, collection, username, password
     client.createMessage envelope.room, messageToSend, (err,response) ->
       if err
@@ -93,7 +100,8 @@ class vsOnline extends Adapter
     @robot.router.post hubotUrl, auth, (req, res) =>
       @robot.logger.debug "New message posted to adapter"
       if(req.body.eventType == "message.posted")
-        @processEvent req.body.resource
+        tfsProcessingTime = @getTFSProcessingTime req.body
+        @processEvent req.body.resource, tfsProcessingTime
         res.send(204)
       
     @emit "connected"
@@ -174,8 +182,9 @@ class vsOnline extends Adapter
     @robot.brain.userForId(userId, { name: userName })
     @robot.brain.data.users[userId].name = userName
 
-  processEvent: (event) =>
-    @ensureTFId () =>
+  processEvent: (event, tfsProcessTime) =>
+    start = process.hrtime()
+    @ensureTFId () =>      
       switch event.messageType
         when "normal"
           @robot.logger.debug "Analyzing message from room " + event.postedRoomId + " from " + event.postedBy.displayName
@@ -192,6 +201,9 @@ class vsOnline extends Adapter
               @registerRoomUser id, event.postedBy.displayName
                         
               message = new TextMessage(author, event.content)
+              if debugTime
+                message.tfsProcessTime = tfsProcessTime
+                message.start = start 
               @receive message
   
   # before processing any command we need to ensure we have the value for
@@ -236,6 +248,9 @@ class vsOnline extends Adapter
         return true if(content.match(expr))
     
     return false
+  
+  getTFSProcessingTime: (body) ->
+    return new Date(body.createdDate) - new Date(body.resource.postedTime)
   
 exports.use = (robot) ->
   new vsOnline robot
